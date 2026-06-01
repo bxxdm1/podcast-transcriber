@@ -63,7 +63,8 @@ async function processAudio(audioFiles, shouldSummarize = false, tempDir = null,
             const { stdout, stderr } = await execAsync(command, {
                 cwd: path.join(__dirname, '..'),
                 maxBuffer: 1024 * 1024 * 20,
-                timeout: 3600000
+                timeout: 3600000,
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
             });
 
             if (stderr && stderr.trim()) console.log(`🔧 Whisper日志: ${stderr.trim()}`);
@@ -157,7 +158,8 @@ async function transcribeSingleFile(audioPath) {
     const { stdout } = await execAsync(command, {
         cwd: path.join(__dirname, '..'),
         maxBuffer: 1024 * 1024 * 20,
-        timeout: 1200000
+        timeout: 1200000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
     });
 
     const result = JSON.parse(stdout);

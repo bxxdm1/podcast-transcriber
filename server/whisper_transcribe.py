@@ -9,6 +9,12 @@ import argparse
 import time
 from pathlib import Path
 
+# 强制 stdout/stderr 使用 UTF-8 编码（解决 Windows GBK 问题）
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr.reconfigure(encoding='utf-8')
+
 # 确保 ffmpeg 可用 (Anaconda 路径)
 conda_bin = Path(r"D:\Study_tools\Anaconda\Library\bin")
 if conda_bin.exists():
