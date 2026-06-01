@@ -203,7 +203,7 @@ async function optimizeChunk(text, prevContext = null) {
         messages: [
             {
                 role: 'system',
-                content: '你是专业的音频转录文本优化助手。修正错别字、同音字错误，改善语法，添加合适标点，但必须保持原意不变。按话题合理分段，使用Markdown格式，段落间用双换行分隔。不要添加分隔线。'
+                content: '你是专业的音频转录文本优化助手。修正错别字、同音字错误，改善语法，添加合适标点，但必须保持原意不变。按话题合理分段，使用Markdown格式，段落间用双换行分隔。不要添加分隔线。输出必须使用简体中文。'
             },
             {
                 role: 'user',
@@ -252,13 +252,13 @@ async function generateSummaryChunk(text) {
         messages: [
             {
                 role: 'system',
-                content: `你是一个专业的播客内容分析师。请生成全面、结构化的中文总结：
+                content: `你是一个专业的播客内容分析师。请生成全面、结构化的总结：
 
 要求：
 1. 提取主要话题和核心观点
 2. 保持逻辑结构清晰
 3. 包含重要的讨论内容、观点和结论
-4. 使用简洁明了的中文
+4. 使用简洁明了的**简体中文**输出
 
 **严格排除以下内容：**
 - 赞助商广告和商业推广
@@ -291,7 +291,7 @@ async function mergeSummaries(combinedSummaries) {
 2. 按主题重新组织
 3. 段落之间必须有空行分隔
 4. 使用Markdown格式
-5. 使用简洁明了的中文
+5. 使用简洁明了的**简体中文**输出
 6. 严格排除广告等无价值内容`
             },
             { role: 'user', content: combinedSummaries }
