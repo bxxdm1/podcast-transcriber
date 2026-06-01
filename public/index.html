@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎙️ 播客转录器 (DeepSeek)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f23; color: #e0e0e0; min-height: 100vh; }
+        .container { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+        h1 { text-align: center; font-size: 2rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { text-align: center; color: #888; margin-bottom: 2rem; }
+        .card { background: #1a1a2e; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #2a2a4a; }
+        label { display: block; font-weight: 600; margin-bottom: 0.5rem; color: #b8b8d0; }
+        input[type="text"] { width: 100%; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #3a3a5a; background: #16213e; color: #e0e0e0; font-size: 1rem; outline: none; transition: border-color 0.3s; }
+        input[type="text"]:focus { border-color: #667eea; }
+        .btn-group { display: flex; gap: 1rem; margin-top: 1rem; }
+        .btn { flex: 1; padding: 0.75rem; border-radius: 8px; border: none; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.3s; }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
+        .btn-secondary { background: #2a2a4a; color: #b8b8d0; }
+        .btn-secondary:hover { background: #3a3a5a; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .progress-bar { width: 100%; height: 6px; background: #2a2a4a; border-radius: 3px; overflow: hidden; margin-top: 1rem; display: none; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 3px; transition: width 0.3s; width: 0%; }
+        .status { margin-top: 0.75rem; color: #888; font-size: 0.9rem; display: none; }
+        .result { margin-top: 1.5rem; display: none; }
+        .result-tabs { display: flex; gap: 0; margin-bottom: 0; }
+        .tab { padding: 0.5rem 1.5rem; background: #2a2a4a; color: #888; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 0.9rem; }
+        .tab.active { background: #1a1a2e; color: #667eea; border: 1px solid #2a2a4a; border-bottom: 1px solid #1a1a2e; }
+        .result-content { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 0 8px 8px 8px; padding: 1.5rem; max-height: 500px; overflow-y: auto; white-space: pre-wrap; line-height: 1.8; font-size: 0.95rem; }
+        .files-section { margin-top: 1.5rem; }
+        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #2a2a4a; }
+        .file-item a { color: #667eea; text-decoration: none; }
+        .file-item a:hover { text-decoration: underline; }
+        .toast { position: fixed; top: 1rem; right: 1rem; padding: 0.75rem 1.5rem; border-radius: 8px; color: white; font-weight: 600; z-index: 1000; display: none; }
+        .toast.success { background: #27ae60; }
+        .toast.error { background: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ 播客转录器</h1>
+        <p class="subtitle">Faster-Whisper 本地转录 + DeepSeek AI 总结</p>
+
+        <div class="card">
+            <label for="url">播客链接</label>
+            <input type="text" id="url" placeholder="粘贴 Apple Podcasts / 小宇宙 / RSS / 音频链接...">
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btnTranscribe" onclick="processPodcast('transcribe_only')">📝 仅转录</button>
+                <button class="btn btn-primary" id="btnSummary" onclick="processPodcast('transcribe_summarize')">📝+📋 转录+总结</button>
+            </div>
+            <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="status" id="status"></div>
+        </div>
+
+        <div class="result" id="result">
+            <div class="result-tabs">
+                <div class="tab active" onclick="switchTab('transcript')">📝 转录文本</div>
+                <div class="tab" onclick="switchTab('summary')">📋 AI总结</div>
+            </div>
+            <div class="result-content" id="resultContent"></div>
+        </div>
+
+        <div class="files-section card" id="filesSection" style="display:none">
+            <label>📁 生成的文件</label>
+            <div id="filesList"></div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let currentData = null;
+        let currentTab = 'transcript';
+
+        function showToast(msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `toast ${type}`;
+            t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+
+        function setStatus(text, show = true) {
+            const el = document.getElementById('status');
+            el.textContent = text;
+            el.style.display = show ? 'block' : 'none';
+        }
+
+        function setProgress(pct) {
+            const bar = document.getElementById('progressBar');
+            const fill = document.getElementById('progressFill');
+            bar.style.display = 'block';
+            fill.style.width = pct + '%';
+        }
+
+        function hideProgress() {
+            document.getElementById('progressBar').style.display = 'none';
+            document.getElementById('progressFill').style.width = '0%';
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab').forEach((t, i) => {
+                t.classList.toggle('active', (tab === 'transcript' && i === 0) || (tab === 'summary' && i === 1));
+            });
+            if (currentData) {
+                document.getElementById('resultContent').textContent =
+                    tab === 'transcript' ? (currentData.transcript || '无转录内容') : (currentData.summary || '无总结内容（请使用"转录+总结"模式）');
+            }
+        }
+
+        async function processPodcast(operation) {
+            const url = document.getElementById('url').value.trim();
+            if (!url) { showToast('请输入播客链接', 'error'); return; }
+
+            const sessionId = 'sess_' + Date.now();
+            const btnT = document.getElementById('btnTranscribe');
+            const btnS = document.getElementById('btnSummary');
+            btnT.disabled = btnS.disabled = true;
+
+            setProgress(0);
+            setStatus('连接中...');
+
+            // SSE 进度监听
+            const evtSource = new EventSource(`/api/progress/${sessionId}`);
+            evtSource.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'progress') {
+                    setProgress(data.progress);
+                    setStatus(data.stageText || '');
+                }
+            };
+
+            try {
+                const resp = await fetch('/api/process-podcast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, operation, sessionId })
+                });
+
+                const json = await resp.json();
+                evtSource.close();
+
+                if (!json.success) throw new Error(json.error);
+
+                currentData = json.data;
+                document.getElementById('result').style.display = 'block';
+                switchTab(currentTab);
+
+                // 显示文件
+                const files = json.data.savedFiles || [];
+                if (files.length > 0) {
+                    document.getElementById('filesSection').style.display = 'block';
+                    document.getElementById('filesList').innerHTML = files.map(f =>
+                        `<div class="file-item"><span>${f.filename}</span><a href="/api/download/${f.filename}">下载</a></div>`
+                    ).join('');
+                }
+
+                showToast('处理完成！');
+            } catch (err) {
+                evtSource.close();
+                showToast(err.message, 'error');
+                setStatus('处理失败: ' + err.message);
+            } finally {
+                btnT.disabled = btnS.disabled = false;
+                hideProgress();
+            }
+        }
+    </script>
+</body>
+</html>
