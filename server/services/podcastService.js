@@ -51,14 +51,44 @@ async function extractApplePodcast(url) {
     if (!idMatch) throw new Error('无法提取节目ID');
 
     const podcastId = idMatch[1];
-    const episodeMatch = url.match(/i=(\d+)/);
+    const episodeId = url.match(/i=(\d+)/)?.[1];
 
-    // iTunes API 获取 RSS
+    // 如果有 episode ID，先用 iTunes Episode Lookup API 精确获取
+    if (episodeId) {
+        console.log(`查找单集 ID: ${episodeId}`);
+        try {
+            const epLookupUrl = `https://itunes.apple.com/lookup?id=${episodeId}&entity=podcastEpisode`;
+            const { data: epData } = await axios.get(epLookupUrl, { timeout: 15000 });
+            if (epData.results?.length) {
+                const ep = epData.results.find(r => r.wrapperType === 'podcastEpisode' || r.kind === 'podcast-episode');
+                if (ep) {
+                    console.log(`✅ 精确匹配到: ${ep.trackName || ep.collectionName}`);
+                    // podcastEpisode 类型可能直接有 episodeUrl 或 feedUrl
+                    if (ep.episodeUrl) {
+                        return { audioUrl: ep.episodeUrl, title: ep.trackName || '', description: ep.description || '' };
+                    }
+                    // 如果有 feedUrl，从 RSS 中按标题匹配
+                    if (ep.feedUrl || ep.collectionViewUrl) {
+                        // 继续往下走，用 RSS 匹配
+                    }
+                    // 存储匹配到的集信息，用于后续 RSS 匹配
+                    var matchedEpisodeTitle = ep.trackName;
+                    var matchedEpisodeGuid = ep.trackId?.toString();
+                }
+            }
+        } catch (e) {
+            console.log('Episode lookup 失败，继续用 RSS:', e.message);
+        }
+    }
+
+    // iTunes API 获取 RSS feed
     const itunesUrl = `https://itunes.apple.com/lookup?id=${podcastId}&entity=podcast`;
     const { data } = await axios.get(itunesUrl, { timeout: 15000 });
 
     if (!data.results?.length || !data.results[0].feedUrl) {
-        throw new Error('未找到 RSS feed');
+        // 备用：从网页抓取
+        console.log('iTunes API 无结果，尝试网页抓取...');
+        return await extractFromApplePage(url);
     }
 
     const feedUrl = data.results[0].feedUrl;
@@ -67,16 +97,56 @@ async function extractApplePodcast(url) {
     const items = await parseRSSFeed(feedUrl);
     if (!items?.length) throw new Error('RSS中无音频');
 
-    // 如果指定了 episode ID，匹配特定集
-    if (episodeMatch) {
-        const epId = episodeMatch[1];
-        const matched = items.find(item =>
-            item.audioUrl?.includes(epId) || item.link?.includes(epId)
+    // 匹配特定集数
+    if (episodeId) {
+        // 方法1: 用 episode title 匹配
+        if (matchedEpisodeTitle) {
+            const byTitle = items.find(item =>
+                item.title && matchedEpisodeTitle &&
+                (item.title.includes(matchedEpisodeTitle) || matchedEpisodeTitle.includes(item.title))
+            );
+            if (byTitle) {
+                console.log(`✅ 按标题匹配到: ${byTitle.title}`);
+                return { audioUrl: byTitle.audioUrl, title: byTitle.title, description: byTitle.description };
+            }
+        }
+        // 方法2: 用 RSS 中的 link/guid 匹配
+        const byLink = items.find(item =>
+            item.link?.includes(episodeId) || item.audioUrl?.includes(episodeId)
         );
-        if (matched) return { audioUrl: matched.audioUrl, title: matched.title, description: matched.description };
+        if (byLink) return { audioUrl: byLink.audioUrl, title: byLink.title, description: byLink.description };
+
+        console.log(`⚠️ 未精确匹配到 episode ${episodeId}，使用第一集`);
     }
 
     return { audioUrl: items[0].audioUrl, title: items[0].title, description: items[0].description };
+}
+
+async function extractFromApplePage(url) {
+    console.log('从 Apple Podcasts 网页抓取...');
+    const { data: html } = await axios.get(url, {
+        timeout: 15000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
+    });
+
+    // 尝试 og:audio
+    const ogAudio = html.match(/<meta\s+property="og:audio"\s+content="([^"]+)"/);
+    if (ogAudio) return { audioUrl: ogAudio[1], title: '', description: '' };
+
+    // 尝试 JSON-LD
+    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/);
+    if (jsonLdMatch) {
+        try {
+            const jsonLd = JSON.parse(jsonLdMatch[1]);
+            if (jsonLd.url) return { audioUrl: jsonLd.url, title: jsonLd.name || '', description: jsonLd.description || '' };
+        } catch (e) {}
+    }
+
+    // 尝试找音频链接
+    const audioMatch = html.match(/https?:\/\/[^"'\s]+\.(?:mp3|m4a)(?:\?[^"'\s]*)?/);
+    if (audioMatch) return { audioUrl: audioMatch[0], title: '', description: '' };
+
+    throw new Error('该播客可能需要付费订阅，无法获取音频');
 }
 
 async function extractXiaoyuzhou(url) {
