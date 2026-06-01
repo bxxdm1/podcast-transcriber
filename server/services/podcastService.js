@@ -53,31 +53,26 @@ async function extractApplePodcast(url) {
     const podcastId = idMatch[1];
     const episodeId = url.match(/i=(\d+)/)?.[1];
 
-    // 如果有 episode ID，先用 iTunes Episode Lookup API 精确获取
+    // 先从网页抓取集数标题
+    let pageTitle = '';
     if (episodeId) {
-        console.log(`查找单集 ID: ${episodeId}`);
+        console.log(`从网页抓取集数标题...`);
         try {
-            const epLookupUrl = `https://itunes.apple.com/lookup?id=${episodeId}&entity=podcastEpisode`;
-            const { data: epData } = await axios.get(epLookupUrl, { timeout: 15000 });
-            if (epData.results?.length) {
-                const ep = epData.results.find(r => r.wrapperType === 'podcastEpisode' || r.kind === 'podcast-episode');
-                if (ep) {
-                    console.log(`✅ 精确匹配到: ${ep.trackName || ep.collectionName}`);
-                    // podcastEpisode 类型可能直接有 episodeUrl 或 feedUrl
-                    if (ep.episodeUrl) {
-                        return { audioUrl: ep.episodeUrl, title: ep.trackName || '', description: ep.description || '' };
-                    }
-                    // 如果有 feedUrl，从 RSS 中按标题匹配
-                    if (ep.feedUrl || ep.collectionViewUrl) {
-                        // 继续往下走，用 RSS 匹配
-                    }
-                    // 存储匹配到的集信息，用于后续 RSS 匹配
-                    var matchedEpisodeTitle = ep.trackName;
-                    var matchedEpisodeGuid = ep.trackId?.toString();
-                }
+            const { data: html } = await axios.get(url, {
+                timeout: 15000,
+                headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
+            });
+            // og:title 通常是 "集数标题 - 节目名称" 的格式
+            const ogTitle = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
+            if (ogTitle) {
+                pageTitle = ogTitle[1].trim();
+                // 去掉 " - 节目名" 后缀，只保留集数标题
+                const dashIdx = pageTitle.lastIndexOf(' - ');
+                if (dashIdx > 0) pageTitle = pageTitle.substring(0, dashIdx).trim();
+                console.log(`网页标题: ${pageTitle}`);
             }
         } catch (e) {
-            console.log('Episode lookup 失败，继续用 RSS:', e.message);
+            console.log('网页抓取失败:', e.message);
         }
     }
 
@@ -86,7 +81,6 @@ async function extractApplePodcast(url) {
     const { data } = await axios.get(itunesUrl, { timeout: 15000 });
 
     if (!data.results?.length || !data.results[0].feedUrl) {
-        // 备用：从网页抓取
         console.log('iTunes API 无结果，尝试网页抓取...');
         return await extractFromApplePage(url);
     }
@@ -97,26 +91,31 @@ async function extractApplePodcast(url) {
     const items = await parseRSSFeed(feedUrl);
     if (!items?.length) throw new Error('RSS中无音频');
 
-    // 匹配特定集数
-    if (episodeId) {
-        // 方法1: 用 episode title 匹配
-        if (matchedEpisodeTitle) {
-            const byTitle = items.find(item =>
-                item.title && matchedEpisodeTitle &&
-                (item.title.includes(matchedEpisodeTitle) || matchedEpisodeTitle.includes(item.title))
-            );
-            if (byTitle) {
-                console.log(`✅ 按标题匹配到: ${byTitle.title}`);
-                return { audioUrl: byTitle.audioUrl, title: byTitle.title, description: byTitle.description };
-            }
+    // 按标题匹配特定集数
+    if (pageTitle) {
+        const matched = items.find(item => {
+            if (!item.title) return false;
+            // 双向包含匹配
+            return item.title.includes(pageTitle) ||
+                   pageTitle.includes(item.title) ||
+                   // 也尝试去掉空格后匹配
+                   item.title.replace(/\s/g, '') === pageTitle.replace(/\s/g, '');
+        });
+        if (matched) {
+            console.log(`✅ 匹配到: ${matched.title}`);
+            return { audioUrl: matched.audioUrl, title: matched.title, description: matched.description };
         }
-        // 方法2: 用 RSS 中的 link/guid 匹配
-        const byLink = items.find(item =>
-            item.link?.includes(episodeId) || item.audioUrl?.includes(episodeId)
+        console.log(`⚠️ 标题未匹配到，尝试模糊匹配...`);
+        // 模糊匹配：取前20个字符
+        const fuzzy = items.find(item =>
+            item.title && pageTitle &&
+            item.title.substring(0, 20) === pageTitle.substring(0, 20)
         );
-        if (byLink) return { audioUrl: byLink.audioUrl, title: byLink.title, description: byLink.description };
-
-        console.log(`⚠️ 未精确匹配到 episode ${episodeId}，使用第一集`);
+        if (fuzzy) {
+            console.log(`✅ 模糊匹配到: ${fuzzy.title}`);
+            return { audioUrl: fuzzy.audioUrl, title: fuzzy.title, description: fuzzy.description };
+        }
+        console.log(`⚠️ 模糊匹配也失败，使用第一集`);
     }
 
     return { audioUrl: items[0].audioUrl, title: items[0].title, description: items[0].description };
